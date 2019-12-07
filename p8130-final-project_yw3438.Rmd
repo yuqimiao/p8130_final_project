@@ -282,19 +282,59 @@ knitr::kable(interaction_table )
 
 ```
 
+the model right now is
+
+```{r}
+fit_prate_rank = lm(ln_sal_mean ~ gender*rank+dept+clin+cert+exper+prate, data = log_lawsuit)
+summary(fit_prate_rank)
+```
+
+stratify the rank and find out the stratified models
+
+```{r}
+# Associate
+associate_fit = log_lawsuit %>% 
+  filter(rank == "Associate") %>% 
+  lm(ln_sal_mean ~ gender+dept+clin+cert+exper+prate, data = .)
+summary(associate_fit)
+
+# Assistant
+assistant_fit = log_lawsuit %>% 
+  filter(rank == "Assistant") %>% 
+  lm(ln_sal_mean ~ gender+dept+clin+cert+exper+prate, data = .)
+summary(assistant_fit)
+
+# Professor
+prof_fit = log_lawsuit %>% 
+  filter(rank == "Full professor") %>%
+  lm(ln_sal_mean ~ gender+dept+clin+cert+exper+prate, data = .)
+summary(prof_fit)
+```
+
+As a result, when rank is assistant professor, gender will play a part in the amount of salary.
+
 The preferred model now is $\hat{salary} = gender*rank+\hat{\beta_1}dept+\hat{\beta_2}clin+\hat{\beta_3}cert+\hat{\beta_4}prate+\hat{\beta_5}exper$
+
+check whether `prate` should be kept
+
+```{r}
+fit_nprate_rank = lm(ln_sal_mean ~ gender*rank+dept+clin+cert+exper, data = log_lawsuit)
+anova(fit_nprate_rank, fit_prate_rank)
+```
+
 
 ## Heteroscedasticity, Normality
 
 ```{r}
-fit_rank = lm(ln_sal_mean ~rank*gender+dept+clin+cert+prate+exper, data = log_lawsuit)
-plot(fit_rank)
+plot(fit_nprate_rank)
+plot(assistant_fit)
+plot(associate_fit)
 ```
 
 ## Multicollinearity
 
 ```{r}
-vif(fit_rank) 
+#vif(fit_rank) 
 # we should drop prate for vif>10 - serious collinearity
 #our_model = 
 ```
