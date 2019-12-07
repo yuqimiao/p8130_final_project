@@ -74,7 +74,7 @@ summary(tab1, title = "Descriptive statistics ",
 #    GGally::ggpairs(upper=list(continuous='smooth'), lower=list(continuous='cor') )
 
     
-   
+skimr::skim(lawsuit)   
 ```
 
 
@@ -131,6 +131,8 @@ As shown above, we choose dept, clin, cert, prate exper as our counfounder in th
 
 ```{r}
 fit_with_r = lm(ln_sal94 ~gender+dept+clin+cert+prate+exper+rank, data = log_lawsuit)
+fit_conf = lm(ln_sal94 ~gender+dept+clin+cert+prate+exper, data = log_lawsuit)
+summary(fit_conf)
 anova(fit_conf,fit_with_r)
 ```
 
@@ -142,10 +144,8 @@ anova(fit_conf,fit_with_r)
 
 * Method1: add interaction term directly into the model
 ```{r}
-fit_conf = lm(ln_sal94 ~gender+dept+clin+cert+prate+exper, data = log_lawsuit)
-summary(fit_conf)
-fit_int = lm(ln_sal94 ~gender+dept+clin+cert+prate+exper+gender*dept+gender*clin+gender*cert+gender*prate+gender*exper+gender*rank, data = log_lawsuit)
-summary(fit_int)
+fit_int_withr = lm(ln_sal94 ~gender+dept+clin+cert+prate+exper++rank+gender*dept+gender*clin+gender*cert+gender*prate+gender*exper+gender*rank, data = log_lawsuit)
+summary(fit_int_withr)
 ```
 
 Thus we keep `gendermale:exper` as the interaction term
@@ -154,20 +154,18 @@ Thus we keep `gendermale:exper` as the interaction term
 
 Since we want to find if there is a interaction, we need to fit the interaction term in the model seperately.
 
-## not meaningful
-
 ```{r}
-## fit all other predictors with gender
+## fit one confounder with gender and its interaction; one by one
 
-interaction_list = vector("list",length = 5)
-for (i in 4:8) {
+interaction_list = vector("list",length = 6)
+for (i in 4:9) {
   fml = as.formula(paste0("ln_sal94 ~ gender +", names(log_lawsuit)[i],"+gender*",names(log_lawsuit)[i],collapse = ""))
   interaction_list[[i-3]] = summary(lm(fml, data = log_lawsuit))
 }
 
 ## tidy the outcome into a dataframe    
-interaction_p_value = vector("list",length = 5)
-for (i in 1:5) {
+interaction_p_value = vector("list",length = 6)
+for (i in 1:6) {
   interaction_p_value[[i]] = broom::tidy(interaction_list[[i]]) %>% 
       mutate(
           model = paste0("ln_sal94 ~ gender +", names(log_lawsuit)[i+3], "+gender*",names(log_lawsuit)[i+3], collapse = "") 
@@ -180,35 +178,84 @@ interaction_table = interaction_p_value %>%
 knitr::kable(interaction_table )  
 ```
 
-
-## When fit the interaction term seperately, there is no interaction term.
-
-How to distinguish?
-
-
+* Make all confounders in the model
 ```{r}
-interaction_list = vector("list",length = 5)
-for (i in 4:8) {
-  fml = as.formula(paste0("ln_sal94 ~ gender +", names(log_lawsuit)[i],"+gender*",names(log_lawsuit)[i],collapse = ""))
-  interaction_list[[i-3]] = summary(lm(fml, data = log_lawsuit))
+## fit all confounders with gender and interaction one by one
+
+interaction_list2 = vector("list",length = 6)
+for (i in 4:9) {
+  fml = as.formula(paste0("ln_sal94 ~ gender + dept + clin + cert + prate + exper + rank +", names(log_lawsuit)[i],"+gender*",names(log_lawsuit)[i],collapse = ""))
+  interaction_list2[[i-3]] = summary(lm(fml, data = log_lawsuit))
 }
 
 ## tidy the outcome into a dataframe    
-interaction_p_value = vector("list",length = 5)
-for (i in 1:5) {
-  interaction_p_value[[i]] = broom::tidy(interaction_list[[i]]) %>% 
+interaction_p_value2 = vector("list",length = 6)
+for (i in 1:6) {
+  interaction_p_value2[[i]] = broom::tidy(interaction_list2[[i]]) %>% 
       mutate(
-          model = paste0("ln_sal94 ~ gender +", names(log_lawsuit)[i+3], "+gender*",names(log_lawsuit)[i+3], collapse = "") 
+          model = paste0("ln_sal94 ~ gender + dept + clin + cert + prate + exper + rank +", names(log_lawsuit)[i+3], "+gender*",names(log_lawsuit)[i+3], collapse = "") 
           )
 }
-interaction_p_value = bind_rows(interaction_p_value) 
-interaction_table = interaction_p_value %>% 
+interaction_p_value2 = bind_rows(interaction_p_value2) 
+interaction_table2 = interaction_p_value2 %>% 
     dplyr::select(model,everything()) %>%
     filter(p.value<=0.05)
-knitr::kable(interaction_table )  
+knitr::kable(interaction_table2)  
 ```
 
 
+### When fit the interaction term seperately, the only interaction term is gender*rank
+
+## Do stratified analysis by rank
+
+```{r}
+rank_list = vector("list", length = 3)
+for (i in 1:3) {
+  rank_list[[i]] = log_lawsuit %>% 
+    filter(rank == as.character(unique(log_lawsuit$rank)[i]))
+}
+sum_list = vector("list", length = 3)
+for (i in 1:3) {
+   sum_list[[i]] = summary(lm(ln_sal94 ~ gender+dept+clin+cert+prate+exper, data = rank_list[[i]]))
+}
+
+stratifid_list = map(sum_list, broom::tidy) %>%
+  bind_rows() %>% 
+  bind_cols(rank = rep(as.character(unique(log_lawsuit$rank)),each = 11)) %>% 
+  dplyr::select(rank, everything()) %>% 
+  filter(term == "gendermale")
+
+
+
+```
+
+
+
+```{r}
+partial_F_list =vector("list", length = 6)
+fit_1 = lm(ln_sal_mean~gender, data = log_lawsuit)
+fit_2 = lm(ln_sal_mean~gender+dept, data = log_lawsuit)
+partial_F_list[[1]] = anova(fit_1,fit_2)
+fit_3 = lm(ln_sal_mean~gender+dept+prate, data = log_lawsuit)
+partial_F_list[[2]] = anova(fit_2,fit_3)
+fit_4 = lm(ln_sal_mean~gender+dept+prate+exper, data = log_lawsuit)
+partial_F_list[[3]] = anova(fit_3,fit_4)
+fit_5 = lm(ln_sal_mean~gender+dept+prate+exper+cert, data = log_lawsuit)
+partial_F_list[[4]] = anova(fit_4,fit_5)
+fit_6 = lm(ln_sal_mean~gender+dept+prate+exper+cert+clin, data = log_lawsuit)
+partial_F_list[[5]] = anova(fit_5,fit_6)
+fit_7 = lm(ln_sal_mean~gender+dept+prate+exper+cert+clin+rank, data = log_lawsuit)
+partial_F_list[[6]] = anova(fit_6,fit_7)
+```
+
+```{r}
+summary(fit_6)
+```
+
+```{r}
+fit_8 = lm(ln_sal_mean~gender+dept+prate+exper+cert+clin+rank+gender*rank, data = log_lawsuit)
+vif(fit_8)
+```
 
 
 
