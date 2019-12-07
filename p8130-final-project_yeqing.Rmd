@@ -1,0 +1,416 @@
+---
+title: "final-project"
+author: "Yuqi Miao"
+date: "12/5/2019"
+output: html_document
+---
+
+```{r, message=FALSE}
+library(tidyverse)
+library(readxl)
+library(arsenal) ## data description
+library(GGally) ## data visualization
+library(modelr)
+library(broom)
+library(viridis)
+library(patchwork)
+library(HH)
+library(faraway)
+library(leaps) # for model selection
+library(caret) ## for cross validation
+library(car) # check the normality of variables using qqplot
+library(ggcorrplot) # draw the correlation plot
+```
+
+```{r message=FALSE}
+knitr::opts_chunk$set(
+  echo = T,
+  message = FALSE)
+
+options(
+  ggplot2.continuous.colour = "viridis",
+  ggplot2.continuous.fill = "viridis")
+
+scale_colour_discrete = scale_colour_viridis_d
+scale_fill_discrete = scale_fill_viridis_d
+
+theme_set(theme_minimal() + theme(legend.position = "bottom"))
+
+```
+
+## EDA: visulization and description table
+
+```{r message=FALSE}
+
+lawsuit = read_csv("Lawsuit.csv") %>% 
+    janitor::clean_names() %>% 
+    mutate(
+        dept = factor(dept, levels = 1:6,labels = c("Biochemistry/Molecular Biology","Physiology ","Genetics", "Pediatrics", "Medicine","Surgery")),
+        gender = factor(gender, levels = c(0,1),labels = c("female","male")),
+        clin = factor(clin,levels =c(1,0), labels = c("clinical","research")),
+        cert = factor(cert,levels =c(1,0), labels = c("certified","not certified")),
+        rank = factor(rank,levels =1:3, labels = c("Assistant", "Associate", "Full professor")),
+        sal_mean = (sal94+sal95)/2
+        )
+    
+
+
+my_controls <- tableby.control(
+  total = T,
+  test = T,  
+  numeric.stats = c("meansd", "medianq1q3", "range"),
+  stats.labels = list(
+    meansd = "Mean (SD)",
+    medianq1q3 = "Median (Q1, Q3)",
+    range = "Min - Max"))
+
+## create description table
+tab1 <- tableby(gender~dept+clin+cert+prate+exper+rank,
+                 data = lawsuit, control = my_controls, total = FALSE)
+
+summary(tab1, title = "Descriptive statistics ", 
+        text = T,  digits = 1) %>% 
+  knitr::kable()   
+
+
+lawsuit %>% 
+  GGally::ggpairs(
+    columns = c("dept", "clin", "cert", "rank", "prate", "exper"),
+    lower = list(
+      continuous = "smooth",
+      combo = "box",
+      mapping =  aes(color = gender)
+    ),
+    upper = "blank") 
+
+correlation_check = read_csv("Lawsuit.csv") %>% 
+  janitor::clean_names() %>% 
+  mutate(
+    sal_mean = (sal94+sal95)/2
+  ) %>% 
+  dplyr::select(dept, gender, clin, cert, prate, exper, rank, sal_mean)
+
+# check the correlation between the variables
+cor(correlation_check) %>% 
+  knitr::kable()
+# print the correlation map of the variables
+corr = round(cor(correlation_check), 1)
+ggcorrplot(corr, method = "circle",
+           hc.order = TRUE, type = "lower", lab = TRUE)
+
+```
+
+
+### Visualization - salary ~ all variables by gender 
+
+```{r}
+# dept
+lawsuit %>%
+  ggplot(aes(y = sal_mean, x = dept, fill = gender)) +
+  geom_boxplot() + 
+  labs(x = "Department", y = "Mean Salary", title = "Mean Salary versus Department by gender") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  scale_fill_brewer(palette="Paired")
+
+# clin
+lawsuit %>%
+  ggplot(aes(y = sal_mean, x = clin, fill = gender)) +
+  geom_boxplot() + 
+  labs(x = "Clin", y = "Mean Salary", title = "Mean Salary versus Clin by gender") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  scale_fill_brewer(palette="Paired")
+
+# cert
+lawsuit %>%
+  ggplot(aes(y = sal_mean, x = cert, fill = gender)) +
+  geom_boxplot() + 
+  labs(x = "Certified or not", y = "Mean Salary", title = "Mean Salary versus Cert by gender") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  scale_fill_brewer(palette="Paired")
+
+# rank
+lawsuit %>%
+  ggplot(aes(y = sal_mean, x =rank, fill = gender)) +
+  geom_boxplot() + 
+  labs(x = "Rank", y = "Mean Salary", title = "Mean Salary versus Rank by gender") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  scale_fill_brewer(palette="Paired")
+
+# prate
+lawsuit %>%
+  ggplot(aes(y = sal_mean, x = prate)) +
+  geom_point(aes(color = gender)) + 
+  labs(x = "Publication rate", y = "Mean Salary", title = "Mean Salary versus publication rate by gender") +
+  scale_color_manual(values = c('#999999','#E69F00'))
+
+# exper
+lawsuit %>%
+  ggplot(aes(y = sal_mean, x = exper)) +
+  geom_point(aes(color = gender)) + 
+  labs(x = "Number of Years since obtaining MD", y = "Mean Salary", title = "Mean Salary versus exper by gender") +
+  scale_color_manual(values = c('#999999','#E69F00'))
+```
+
+## modeling
+
+```{r}
+lawsuit %>%
+  ggplot(aes(x = sal_mean)) + geom_density()
+#qqnorm(lawsuit$sal_mean)
+#qqline(lawsuit$sal_mean)
+qqPlot(lawsuit$sal_mean)
+# extremely right skewed, not normally distributed
+exp
+full_model = lm(data = lawsuit, sal_mean ~ dept + gender + clin + cert + prate + exper + rank)
+boxcox(full_model) # lamda close to 0, consider log transformation 
+
+log_lawsuit = lawsuit %>% 
+    mutate(ln_sal94 = log(sal94),
+           ln_sal95 = log(sal95),
+           ln_sal_mean = log(sal_mean)) %>% 
+    dplyr::select(ln_sal_mean,gender,everything())
+
+log_lawsuit %>%
+  ggplot(aes(x = ln_sal_mean)) + geom_density()
+#qqnorm(log_lawsuit$ln_sal_mean)
+#qqline(log_lawsuit$ln_sal_mean)
+qqPlot(log_lawsuit$ln_sal_mean)
+# becomes nearly bell-shaped
+full_model2 = lm(data = log_lawsuit, ln_sal_mean ~ dept + gender + clin + cert + prate + exper + rank)
+boxcox(full_model2) # lamda close to 1
+```
+
+
+### Find confounders
+
+```{r}
+
+
+## fit the model with only gender
+fit_1_sum = 
+    lm(ln_sal_mean~gender,data = log_lawsuit) %>% 
+    summary() %>%
+    broom::tidy() %>% 
+    mutate(model = "ln_sal_mean~gender")
+    
+## fit all other predictors with gender
+
+p_value_list = vector("list",length = 6)
+for (i in 4:9) {
+  fml = as.formula(paste0("ln_sal_mean ~ gender +", names(log_lawsuit)[i], collapse = ""))
+  p_value_list[[i-3]] = summary(lm(fml, data = log_lawsuit))
+}
+
+## tidy the outcome into a dataframe    
+p_value = vector("list",length = 6)
+for (i in 1:6) {
+  p_value[[i]] = broom::tidy(p_value_list[[i]]) %>% 
+      mutate(
+          model = paste0("ln_sal_mean ~ gender +", names(log_lawsuit)[i+3], collapse = "") 
+          )
+}
+p_value = bind_rows(fit_1_sum,p_value) 
+confounder_table = p_value %>% 
+    dplyr::select(model,everything()) %>% 
+    filter(term == "gendermale") %>% 
+    mutate(change_rate = round((estimate -0.3862374)/0.3862374,3)) %>% 
+    dplyr::select(model,term,estimate,change_rate) 
+    
+    
+    # to show the change rate of coefficient,need term, change rate, p_value
+knitr::kable(confounder_table)   
+```
+
+As shown above, we choose dept, clin, cert, prate, exper as our counfounder in the model as the change rate of the parameters above 10%.
+
+### ?necessity to change reference?
+
+To make sure all the coefficient of the variables are significant in the model, we need to check the model with all confounders.
+
+```{r}
+fit_conf = lm(ln_sal_mean ~gender+dept+clin+cert+prate+exper, data = log_lawsuit)
+summary(fit_conf) %>% 
+  broom::tidy() %>% 
+  filter(p.value > 0.05) %>% 
+  knitr::kable()
+```
+
+We need to consider whether we need to consider whether we need to drop `prate`
+Use stepwise to check the recommended model.
+
+```{r}
+data_new = log_lawsuit %>%
+  mutate(experience = ifelse(exper<5, "0",
+                             ifelse(exper<10, "1",
+                                    ifelse(exper<14,"2","3"))),
+         experience = factor(experience))
+
+model = lm(data = data_new, ln_sal_mean ~gender+dept+clin+cert+prate+exper+rank+gender*experience+gender*rank)
+summary(model)
+```
+
+
+### find interaction terms
+
+* Method1: add interaction term directly into the model
+```{r}
+fit_conf = lm(ln_sal_mean ~gender+dept+clin+cert+prate+exper+rank, data = log_lawsuit)
+summary(fit_conf)
+fit_int = lm(ln_sal_mean ~gender+dept+clin+cert+prate+exper+rank+gender*dept+gender*clin+gender*cert+gender*prate+gender*exper+gender*rank, data = log_lawsuit)
+summary(fit_int)
+```
+
+Thus we keep `gendermale:exper` as the interaction term
+
+* Method2: add interaction terms seperately
+
+Since we want to find if there is a interaction, we need to fit the interaction term in the model seperately.
+
+```{r}
+## fit all other predictors with gender
+
+interaction_list = vector("list",length = 6)
+for (i in 4:9) {
+  fml = as.formula(paste0("ln_sal_mean ~ gender *", names(log_lawsuit)[i], collapse = ""))
+  interaction_list[[i-3]] = summary(lm(fml, data = log_lawsuit))
+}
+
+## tidy the outcome into a dataframe    
+interaction_p_value = vector("list",length = 6)
+for (i in 1:6) {
+  interaction_p_value[[i]] = broom::tidy(interaction_list[[i]]) %>% 
+      mutate(
+          model = paste0("ln_sal_mean ~ gender *", names(log_lawsuit)[i+3], collapse = "") 
+          )
+}
+interaction_p_value = bind_rows(interaction_p_value) 
+interaction_table = interaction_p_value %>% 
+    dplyr::select(model,everything()) %>%
+    filter(p.value<=0.05)
+knitr::kable(interaction_table )  
+
+
+```
+
+the model right now is
+
+```{r}
+fit_prate_rank = lm(ln_sal_mean ~ gender*rank+dept+clin+cert+exper+prate, data = log_lawsuit)
+summary(fit_prate_rank)
+```
+
+stratify the rank and find out the stratified models
+
+```{r}
+# Associate
+associate_fit = log_lawsuit %>% 
+  filter(rank == "Associate") %>% 
+  lm(ln_sal_mean ~ gender+dept+clin+cert+exper+prate, data = .)
+summary(associate_fit)
+
+# Assistant
+assistant_fit = log_lawsuit %>% 
+  filter(rank == "Assistant") %>% 
+  lm(ln_sal_mean ~ gender+dept+clin+cert+exper+prate, data = .)
+summary(assistant_fit)
+
+# Professor
+prof_fit = log_lawsuit %>% 
+  filter(rank == "Full professor") %>%
+  lm(ln_sal_mean ~ gender+dept+clin+cert+exper+prate, data = .)
+summary(prof_fit)
+```
+
+
+```{r}
+# experience1
+experience1_fit = data_new %>% 
+  filter(experience == "1") %>% 
+  lm(ln_sal_mean ~ gender+dept+clin+cert+exper+prate, data = .)
+summary(experience1_fit)
+
+# experience2
+experience2_fit = data_new %>% 
+  filter(experience == "2") %>% 
+  lm(ln_sal_mean ~ gender+dept+clin+cert+exper+prate, data = .)
+summary(experience2_fit)
+
+# experience3
+experience3_fit = data_new %>% 
+  filter(experience == "3") %>% 
+  lm(ln_sal_mean ~ gender+dept+clin+cert+exper+prate, data = .)
+summary(experience3_fit)
+
+# experience0
+experience0_fit = data_new %>% 
+  filter(experience == "0") %>% 
+  lm(ln_sal_mean ~ gender+dept+clin+cert+exper+prate, data = .)
+summary(experience0_fit)
+```
+
+
+
+As a result, when rank is assistant professor, gender will play a part in the amount of salary.
+
+The preferred model now is $\hat{salary} = gender*rank+\hat{\beta_1}dept+\hat{\beta_2}clin+\hat{\beta_3}cert+\hat{\beta_4}prate+\hat{\beta_5}exper$
+
+check whether `prate` should be kept
+
+```{r}
+fit_nprate_rank = lm(ln_sal_mean ~ gender*rank+dept+clin+cert+exper, data = log_lawsuit)
+anova(fit_nprate_rank, fit_prate_rank)
+```
+
+
+## Heteroscedasticity, Normality
+
+```{r}
+plot(fit_nprate_rank)
+plot(assistant_fit)
+plot(associate_fit)
+```
+
+## Multicollinearity
+
+```{r}
+#vif(fit_rank) 
+# we should drop prate for vif>10 - serious collinearity
+#our_model = 
+```
+
+
+## Outliers, influential points
+
+```{r}
+our_model = lm(ln_sal_mean ~gender+dept+clin+cert+exper+gender*rank, data = log_lawsuit)
+summary(our_model)
+
+# studentized residuals
+stu_res = rstandard(our_model)
+outlier_y = stu_res[abs(stu_res)>2.5]
+outlier_y
+
+influence.measures(our_model)
+
+```
+
+
+Annotations
+
+
+
+## When fit the interaction term seperately, there is no interaction term.
+
+How to distinguish?
+
+
+
+
+
+
+
+
+
+
+
+
