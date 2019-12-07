@@ -238,6 +238,16 @@ summary(fit_conf) %>%
 We need to consider whether we need to consider whether we need to drop `prate`
 Use stepwise to check the recommended model.
 
+```{r}
+data_new = log_lawsuit %>%
+  mutate(experience = ifelse(exper<5, "0",
+                             ifelse(exper<10, "1",
+                                    ifelse(exper<14,"2","3"))),
+         experience = factor(experience))
+
+model = lm(data = data_new, ln_sal_mean ~gender+dept+clin+cert+prate+exper+rank+gender*experience+gender*rank)
+summary(model)
+```
 
 
 ### find interaction terms
@@ -310,6 +320,35 @@ prof_fit = log_lawsuit %>%
   lm(ln_sal_mean ~ gender+dept+clin+cert+exper+prate, data = .)
 summary(prof_fit)
 ```
+
+
+```{r}
+# experience1
+experience1_fit = data_new %>% 
+  filter(experience == "1") %>% 
+  lm(ln_sal_mean ~ gender+dept+clin+cert+exper+prate, data = .)
+summary(experience1_fit)
+
+# experience2
+experience2_fit = data_new %>% 
+  filter(experience == "2") %>% 
+  lm(ln_sal_mean ~ gender+dept+clin+cert+exper+prate, data = .)
+summary(experience2_fit)
+
+# experience3
+experience3_fit = data_new %>% 
+  filter(experience == "3") %>% 
+  lm(ln_sal_mean ~ gender+dept+clin+cert+exper+prate, data = .)
+summary(experience3_fit)
+
+# experience0
+experience0_fit = data_new %>% 
+  filter(experience == "0") %>% 
+  lm(ln_sal_mean ~ gender+dept+clin+cert+exper+prate, data = .)
+summary(experience0_fit)
+```
+
+
 
 As a result, when rank is assistant professor, gender will play a part in the amount of salary.
 
