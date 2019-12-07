@@ -1,0 +1,219 @@
+---
+title: "final-project"
+author: "Yuqi Miao"
+date: "12/5/2019"
+output: html_document
+---
+
+```{r, message=FALSE}
+library(tidyverse)
+library(readxl)
+library(arsenal) ## data description
+library(GGally) ## data visualization
+library(modelr)
+library(broom)
+library(viridis)
+library(patchwork)
+library(HH)
+library(faraway)
+library(leaps) # for model selection
+library(caret) ## for cross validation
+```
+
+```{r}
+knitr::opts_chunk$set(
+  echo = T,
+  message = FALSE)
+
+options(
+  ggplot2.continuous.colour = "viridis",
+  ggplot2.continuous.fill = "viridis")
+
+scale_colour_discrete = scale_colour_viridis_d
+scale_fill_discrete = scale_fill_viridis_d
+
+theme_set(theme_minimal() + theme(legend.position = "bottom"))
+
+```
+
+## EDA: visulization and description table
+
+```{r}
+
+lawsuit = read_csv("Lawsuit.csv") %>% 
+    janitor::clean_names() %>% 
+    mutate(
+        dept = factor(dept, levels = 1:6,labels = c("Biochemistry/Molecular Biology","Physiology ","Genetics", "Pediatrics", "Medicine","Surgery")),
+        gender = factor(gender, levels = c(0,1),labels = c("female","male")),
+        clin = factor(clin,levels =c(1,0), labels = c("clinical","research")),
+        cert = factor(cert,levels =c(1,0), labels = c("certified","not certified")),
+        rank = factor(rank,levels =1:3, labels = c("Assistant", "Associate", "Full professor")),
+        sal_mean = (sal94+sal95)/2
+        )
+    
+
+
+my_controls <- tableby.control(
+  total = T,
+  test = T,  
+  numeric.stats = c("meansd", "medianq1q3", "range"),
+  stats.labels = list(
+    meansd = "Mean (SD)",
+    medianq1q3 = "Median (Q1, Q3)",
+    range = "Min - Max"))
+
+## create description table
+tab1 <- tableby(gender~dept+clin+cert+prate+exper+rank,
+                 data = lawsuit, control = my_controls, total = FALSE)
+
+summary(tab1, title = "Descriptive statistics ", 
+        text = T,  digits = 1) %>% 
+  knitr::kable()   
+
+#lawsuit %>% 
+#    GGally::ggpairs(upper=list(continuous='smooth'), lower=list(continuous='cor') )
+
+    
+   
+```
+
+
+## modeling
+
+### Find confounders
+
+```{r}
+log_lawsuit = lawsuit %>% 
+    mutate(ln_sal94 = log(sal94),
+           ln_sal95 = log(sal95),
+           ln_sal_mean = log(sal_mean)) %>% 
+    dplyr::select(ln_sal94,gender,everything())
+
+## fit the model with only gender
+fit_1_sum = 
+    lm(ln_sal94~gender,data = log_lawsuit) %>% 
+    summary() %>%
+    broom::tidy() %>% 
+    mutate(model = "ln_sal94~gender")
+    
+
+## fit all other predictors with gender
+
+p_value_list = vector("list",length = 6)
+for (i in 4:9) {
+  fml = as.formula(paste0("ln_sal94 ~ gender +", names(log_lawsuit)[i], collapse = ""))
+  p_value_list[[i-3]] = summary(lm(fml, data = log_lawsuit))
+}
+
+## tidy the outcome into a dataframe    
+p_value = vector("list",length = 6)
+for (i in 1:6) {
+  p_value[[i]] = broom::tidy(p_value_list[[i]]) %>% 
+      mutate(
+          model = paste0("ln_sal94 ~ gender +", names(log_lawsuit)[i+3], collapse = "") 
+          )
+}
+p_value = bind_rows(fit_1_sum,p_value) 
+confounder_table = p_value %>% 
+    dplyr::select(model,everything()) %>% 
+    filter(term == "gendermale") %>% 
+    mutate(change_rate = round((estimate -0.3862374)/0.3862374,3)) %>% 
+    dplyr::select(model,term,estimate,change_rate) 
+    
+    
+    # to show the change rate of coefficient,need term, change rate, p_value
+knitr::kable(confounder_table)   
+```
+
+As shown above, we choose dept, clin, cert, prate exper as our counfounder in the model as the change rate of the parameters above 10%.
+
+## use anova to test whether rank should be included.
+
+```{r}
+fit_with_r = lm(ln_sal94 ~gender+dept+clin+cert+prate+exper+rank, data = log_lawsuit)
+anova(fit_conf,fit_with_r)
+```
+
+## rank can not be deleted.
+
+### ?necessity to change reference?
+
+### find interaction terms
+
+* Method1: add interaction term directly into the model
+```{r}
+fit_conf = lm(ln_sal94 ~gender+dept+clin+cert+prate+exper, data = log_lawsuit)
+summary(fit_conf)
+fit_int = lm(ln_sal94 ~gender+dept+clin+cert+prate+exper+gender*dept+gender*clin+gender*cert+gender*prate+gender*exper+gender*rank, data = log_lawsuit)
+summary(fit_int)
+```
+
+Thus we keep `gendermale:exper` as the interaction term
+
+* Method2: add interaction terms saperately
+
+Since we want to find if there is a interaction, we need to fit the interaction term in the model seperately.
+
+## not meaningful
+
+```{r}
+## fit all other predictors with gender
+
+interaction_list = vector("list",length = 5)
+for (i in 4:8) {
+  fml = as.formula(paste0("ln_sal94 ~ gender +", names(log_lawsuit)[i],"+gender*",names(log_lawsuit)[i],collapse = ""))
+  interaction_list[[i-3]] = summary(lm(fml, data = log_lawsuit))
+}
+
+## tidy the outcome into a dataframe    
+interaction_p_value = vector("list",length = 5)
+for (i in 1:5) {
+  interaction_p_value[[i]] = broom::tidy(interaction_list[[i]]) %>% 
+      mutate(
+          model = paste0("ln_sal94 ~ gender +", names(log_lawsuit)[i+3], "+gender*",names(log_lawsuit)[i+3], collapse = "") 
+          )
+}
+interaction_p_value = bind_rows(interaction_p_value) 
+interaction_table = interaction_p_value %>% 
+    dplyr::select(model,everything()) %>%
+    filter(p.value<=0.05)
+knitr::kable(interaction_table )  
+```
+
+
+## When fit the interaction term seperately, there is no interaction term.
+
+How to distinguish?
+
+
+```{r}
+interaction_list = vector("list",length = 5)
+for (i in 4:8) {
+  fml = as.formula(paste0("ln_sal94 ~ gender +", names(log_lawsuit)[i],"+gender*",names(log_lawsuit)[i],collapse = ""))
+  interaction_list[[i-3]] = summary(lm(fml, data = log_lawsuit))
+}
+
+## tidy the outcome into a dataframe    
+interaction_p_value = vector("list",length = 5)
+for (i in 1:5) {
+  interaction_p_value[[i]] = broom::tidy(interaction_list[[i]]) %>% 
+      mutate(
+          model = paste0("ln_sal94 ~ gender +", names(log_lawsuit)[i+3], "+gender*",names(log_lawsuit)[i+3], collapse = "") 
+          )
+}
+interaction_p_value = bind_rows(interaction_p_value) 
+interaction_table = interaction_p_value %>% 
+    dplyr::select(model,everything()) %>%
+    filter(p.value<=0.05)
+knitr::kable(interaction_table )  
+```
+
+
+
+
+
+
+
+
+
+
