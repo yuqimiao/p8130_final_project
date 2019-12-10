@@ -240,9 +240,7 @@ Use stepwise to check the recommended model.
 
 ```{r}
 data_new = log_lawsuit %>%
-  mutate(experience = ifelse(exper<5, "0",
-                             ifelse(exper<10, "1",
-                                    ifelse(exper<14,"2","3"))),
+  mutate(experience = ifelse(exper<10, "0","1"),
          experience = factor(experience))
 
 model = lm(data = data_new, ln_sal_mean ~gender+dept+clin+cert+prate+exper+rank+gender*experience+gender*rank)
@@ -323,29 +321,105 @@ summary(prof_fit)
 
 
 ```{r}
-# experience1
+# experience0, associate
 experience1_fit = data_new %>% 
-  filter(experience == "1") %>% 
-  lm(ln_sal_mean ~ gender+dept+clin+cert+exper+prate, data = .)
-summary(experience1_fit)
+  filter(experience == "0",
+         rank == "Associate") %>% 
+  lm(ln_sal_mean ~ gender+dept+clin+cert+exper, data = .)
+t1 = summary(experience1_fit) %>%
+  broom::tidy() %>%
+  filter(term == "gendermale") %>%
+  janitor::clean_names() %>%
+  dplyr::select(term, estimate, p_value) %>%
+  mutate(significance = ifelse(p_value < 0.05, "significant", "non significant")) %>%
+  mutate(group = "Experience < 10 years, Associate") %>%
+  dplyr::select(group, everything(), -term)
 
-# experience2
+# experience1, associate
 experience2_fit = data_new %>% 
-  filter(experience == "2") %>% 
-  lm(ln_sal_mean ~ gender+dept+clin+cert+exper+prate, data = .)
-summary(experience2_fit)
+  filter(experience == "1",
+         rank == "Associate") %>% 
+  lm(ln_sal_mean ~ gender+dept+clin+cert+exper, data = .)
+t2 = summary(experience2_fit) %>%
+  broom::tidy() %>%
+  filter(term == "gendermale") %>%
+  janitor::clean_names() %>%
+  dplyr::select(term, estimate, p_value) %>%
+  mutate(significance = ifelse(p_value < 0.05, "significant", "non significant")) %>%
+  mutate(group = "Experience >= 10 years, Associate") %>%
+  dplyr::select(group, everything(), -term)
 
-# experience3
+# experience0, assistant
 experience3_fit = data_new %>% 
-  filter(experience == "3") %>% 
-  lm(ln_sal_mean ~ gender+dept+clin+cert+exper+prate, data = .)
-summary(experience3_fit)
+  filter(experience == "0",
+         rank == "Assistant") %>% 
+  lm(ln_sal_mean ~ gender+dept+clin+cert+exper, data = .)
+t3 = summary(experience3_fit) %>%
+  broom::tidy() %>%
+  filter(term == "gendermale") %>%
+  janitor::clean_names() %>%
+  dplyr::select(term, estimate, p_value) %>%
+  mutate(significance = ifelse(p_value < 0.05, "significant", "non significant")) %>%
+  mutate(group = "Experience < 10 years, Assistant") %>%
+  dplyr::select(group, everything(), -term)
 
-# experience0
-experience0_fit = data_new %>% 
-  filter(experience == "0") %>% 
-  lm(ln_sal_mean ~ gender+dept+clin+cert+exper+prate, data = .)
-summary(experience0_fit)
+# experience1, assistant
+experience4_fit = data_new %>% 
+  filter(experience == "1",
+         rank == "Assistant") %>% 
+  lm(ln_sal_mean ~ gender+dept+clin+cert+exper, data = .)
+t4 = summary(experience4_fit)%>%
+  broom::tidy() %>%
+  filter(term == "gendermale") %>%
+  janitor::clean_names() %>%
+  dplyr::select(term, estimate, p_value) %>%
+  mutate(significance = ifelse(p_value < 0.05, "significant", "non significant")) %>%
+  mutate(group = "Experience >= 10 years, Assistant") %>%
+  dplyr::select(group, everything(), -term)
+
+# experience0, Full professor
+experience5_fit = data_new %>% 
+  filter(experience == "0",
+         rank == "Assistant") %>% 
+  lm(ln_sal_mean ~ gender+dept+clin+cert+exper, data = .)
+t5 = summary(experience5_fit) %>%
+  broom::tidy() %>%
+  filter(term == "gendermale") %>%
+  janitor::clean_names() %>%
+  dplyr::select(term, estimate, p_value) %>%
+  mutate(significance = ifelse(p_value < 0.05, "significant", "non significant")) %>%
+  mutate(group = "Experience < 10 years, Full professor") %>%
+  dplyr::select(group, everything(), -term)
+
+# experience1, Full professor
+experience6_fit = data_new %>% 
+  filter(experience == "1",
+         rank == "Full professor") %>% 
+  lm(ln_sal_mean ~ gender+dept+clin+cert+exper, data = .)
+t6 = summary(experience6_fit) %>%
+  broom::tidy() %>%
+  filter(term == "gendermale") %>%
+  janitor::clean_names() %>%
+  dplyr::select(term, estimate, p_value) %>%
+  mutate(significance = ifelse(p_value < 0.05, "significant", "non significant")) %>%
+  mutate(group = "Experience >= 10 years, Full professor") %>%
+  dplyr::select(group, everything(), -term)
+
+rbind(t1, t2, t3, t4, t5, t6) %>%
+  arrange(p_value) %>%
+  knitr::kable(digits = 2)
+
+data_new %>%
+  group_by(experience, rank, gender) %>%
+  summarise(count = n()) %>% 
+  ungroup() %>%
+  mutate(experience = ifelse(experience == "0", "Experience < 10 years", "Experience >= 10 years")) %>%
+  mutate(group = str_c(experience, rank, sep = ",")) %>%
+  ggplot(aes(x = group, y = count, fill = gender)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  scale_fill_brewer(palette="Paired") 
+  
 ```
 
 
@@ -380,17 +454,33 @@ plot(associate_fit)
 
 
 ## Outliers, influential points
+## diagnose experience3_fit
 
 ```{r}
-our_model = lm(ln_sal_mean ~gender+dept+clin+cert+exper+gender*rank, data = log_lawsuit)
-summary(our_model)
+selecteddata = data_new %>% 
+  filter(experience == "0",
+         rank == "Assistant")
 
-# studentized residuals
-stu_res = rstandard(our_model)
-outlier_y = stu_res[abs(stu_res)>2.5]
-outlier_y
+influence.measures(experience3_fit)
 
-influence.measures(our_model)
+par(mfrow=c(2,2))
+plot(experience3_fit)
+
+# Examine results with and without observations 5 and 28 that have very high survivals (>2000)
+summary(experience3_fit)
+fit_only60<-selecteddata[c(60),]
+
+
+# Remove observations 5 and 28
+fit_no60<-selecteddata[c(-60),]
+mult.fit_no60<-  lm(ln_sal_mean ~ gender+dept+clin+cert+exper, data = fit_no60)
+
+summary(mult.fit_no60)
+
+influence.measures(mult.fit_no60)
+
+par(mfrow=c(2,2))
+plot(mult.fit_no60)
 
 ```
 
