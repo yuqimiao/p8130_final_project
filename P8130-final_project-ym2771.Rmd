@@ -259,6 +259,156 @@ vif(fit_8)
 
 
 
+## Read from articles:
+1. use stepwise to find confounding:
+first give an expectation of all predictors, at least direction, then use stepwise to add variable 1 by 1 to see during the process if there is a change in direction, and interprete the confounding accordingly;
+
+2. use a saturated model including all confounders and interactions 
+Interpreting with the interaction term
+
+## change the code into functions
+
+### find confounders
+
+
+```{r}
+## fit the model with only gender
+fit_1_sum = 
+  lm(ln_sal94~gender,data = log_lawsuit) %>% 
+  summary() %>%
+  broom::tidy() %>% 
+  mutate(model = "ln_sal94~gender") %>% 
+  dplyr::select(model,term, estimate) %>% 
+  dplyr::filter(term == "gendermale")
+  
+
+## confounder function
+confounder = function(y,x){
+  fml =  as.formula(paste0(y," ~ gender +", x, collapse = ""))
+  summary = summary(lm(fml, data = log_lawsuit))
+  
+  result = summary %>% 
+    broom::tidy() %>% 
+   mutate(
+     model = paste0(y," ~ gender +", x, collapse = "")
+     ) %>% 
+   dplyr::select(model,term, estimate) %>% 
+   dplyr::filter(term == "gendermale")
+  return(result)
+}
+
+confounder_table = function(x){
+  first = fit_1_sum$estimate
+  bind_rows(fit_1_sum,map2(.x = x, .y = names(log_lawsuit)[4:9], .f =confounder)) %>% ## map! 
+    mutate(change = round((estimate - first)/first,3)) %>% 
+    mutate(
+      result = case_when(
+        abs(change) == 0 ~ " ",
+        abs(change) >=0.1 ~ "confounder",
+        abs(change)<=0.1 ~ "not confounder"
+    ))
+  
+}
+confounder_table("ln_sal94")  
+```
+
+### find interactions
+
+```{r}
+## fit all confounders with gender and interaction one by one
+
+interaction_list2 = vector("list",length = 6)
+for (i in 4:9) {
+  fml = as.formula(paste0("ln_sal94 ~ gender + dept + clin + cert + prate + exper + rank +", names(log_lawsuit)[i],"+gender*",names(log_lawsuit)[i],collapse = ""))
+  interaction_list2[[i-3]] = summary(lm(fml, data = log_lawsuit))
+}
+
+## tidy the outcome into a dataframe    
+interaction_p_value2 = vector("list",length = 6)
+for (i in 1:6) {
+  interaction_p_value2[[i]] = broom::tidy(interaction_list2[[i]]) %>% 
+      mutate(
+          model = paste0("ln_sal94 ~ gender + dept + clin + cert + prate + exper + rank +", names(log_lawsuit)[i+3], "+gender*",names(log_lawsuit)[i+3], collapse = "") 
+          )
+}
+interaction_p_value2 = bind_rows(interaction_p_value2) 
+interaction_table2 = interaction_p_value2 %>% 
+    dplyr::select(model,everything()) %>%
+    filter(p.value<=0.05)
+knitr::kable(interaction_table2)  
+```
+
+
+```{r}
+interaction_t = function(outcome, test){
+  fml = as.formula(paste0(outcome,"~ gender + dept + clin + cert + prate + exper + rank +", test,"+gender*",test,collapse = ""))
+  summary = summary(lm(fml,data = log_lawsuit))
+  
+  result = summary %>% 
+    broom::tidy() %>% 
+    mutate(
+     add_term = paste0("gender*",test,collapse = "")
+      ) %>% 
+    dplyr::select(add_term,term, p.value) %>% 
+    filter(str_detect(term, "gendermale:")) %>% 
+    mutate(result = ifelse(p.value>0.05, "not significant", "significant"))
+  
+  return(result)
+  
+}
+
+interaction_t_table = function(outcome){
+  bind_rows(map2(.x =outcome, .y = names(log_lawsuit)[4:9], interaction_t))
+}  
+interaction_t_table("ln_sal94")
+interaction_t_table("ln_sal95")
+interaction_t_table("ln_sal_mean")
+```
+
+```{r}
+interaction_F = function(outcome,test){
+  fml = as.formula(paste0(outcome,"~ gender + dept + clin + cert + prate + exper + rank +", test,"+gender*",test,collapse = ""))
+  anova = anova(lm(fml,data = log_lawsuit))
+  
+  result = anova %>% 
+    broom::tidy() %>% 
+    mutate(add_term = paste0("gender:",test)) %>% 
+    dplyr::select(add_term, term,statistic, p.value) %>% 
+    mutate(result = ifelse(p.value> 0.05,"not significant","significant")) %>% 
+    filter(str_detect(term,"gender:"))
+  return(result)
+}
+
+interaction_F_table = function(outcome){
+  bind_rows(map2(.x = outcome, .y = names(log_lawsuit)[4:9], interaction_F))
+}
+
+interaction_F_table("ln_sal94")
+interaction_F_table("ln_sal95")
+interaction_F_table("ln_sal_mean")
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
