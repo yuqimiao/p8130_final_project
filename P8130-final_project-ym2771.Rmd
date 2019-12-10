@@ -136,7 +136,14 @@ summary(fit_conf)
 anova(fit_conf,fit_with_r)
 ```
 
-## rank can not be deleted.
+### rank can not be deleted.
+
+## VIF 
+```{r}
+vif(fit_with_r)
+```
+
+## delete prate
 
 ### ?necessity to change reference?
 
@@ -231,26 +238,7 @@ stratifid_list = map(sum_list, broom::tidy) %>%
 
 
 
-```{r}
-partial_F_list =vector("list", length = 6)
-fit_1 = lm(ln_sal_mean~gender, data = log_lawsuit)
-fit_2 = lm(ln_sal_mean~gender+dept, data = log_lawsuit)
-partial_F_list[[1]] = anova(fit_1,fit_2)
-fit_3 = lm(ln_sal_mean~gender+dept+prate, data = log_lawsuit)
-partial_F_list[[2]] = anova(fit_2,fit_3)
-fit_4 = lm(ln_sal_mean~gender+dept+prate+exper, data = log_lawsuit)
-partial_F_list[[3]] = anova(fit_3,fit_4)
-fit_5 = lm(ln_sal_mean~gender+dept+prate+exper+cert, data = log_lawsuit)
-partial_F_list[[4]] = anova(fit_4,fit_5)
-fit_6 = lm(ln_sal_mean~gender+dept+prate+exper+cert+clin, data = log_lawsuit)
-partial_F_list[[5]] = anova(fit_5,fit_6)
-fit_7 = lm(ln_sal_mean~gender+dept+prate+exper+cert+clin+rank, data = log_lawsuit)
-partial_F_list[[6]] = anova(fit_6,fit_7)
-```
 
-```{r}
-summary(fit_6)
-```
 
 ```{r}
 fit_8 = lm(ln_sal_mean~gender+dept+prate+exper+cert+clin+rank+gender*rank, data = log_lawsuit)
@@ -298,7 +286,17 @@ confounder = function(y,x){
 }
 
 confounder_table = function(x){
+  fml =  as.formula(paste0(x," ~ gender", collapse = ""))
+  fit_1_sum = 
+  lm(fml,data = log_lawsuit) %>% 
+  summary() %>%
+  broom::tidy() %>% 
+  mutate(model = paste0(x,"~gender",collapse = "")) %>% 
+  dplyr::select(model,term, estimate) %>% 
+  dplyr::filter(term == "gendermale")
+  
   first = fit_1_sum$estimate
+  
   bind_rows(fit_1_sum,map2(.x = x, .y = names(log_lawsuit)[4:9], .f =confounder)) %>% ## map! 
     mutate(change = round((estimate - first)/first,3)) %>% 
     mutate(
@@ -309,8 +307,36 @@ confounder_table = function(x){
     ))
   
 }
-confounder_table("ln_sal94")  
+confounder_table("ln_sal_mean")  
 ```
+
+```{r}
+partial_F_list =vector("list", length = 6)
+fit_1 = lm(ln_sal_mean~gender, data = log_lawsuit)
+fit_2 = lm(ln_sal_mean~gender+dept, data = log_lawsuit)
+partial_F_list[[1]] = anova(fit_1,fit_2)
+fit_3 = lm(ln_sal_mean~gender+dept+prate, data = log_lawsuit)
+partial_F_list[[2]] = anova(fit_2,fit_3)
+fit_4 = lm(ln_sal_mean~gender+dept+prate+exper, data = log_lawsuit)
+partial_F_list[[3]] = anova(fit_3,fit_4)
+fit_5 = lm(ln_sal_mean~gender+dept+prate+exper+cert, data = log_lawsuit)
+partial_F_list[[4]] = anova(fit_4,fit_5)
+fit_6 = lm(ln_sal_mean~gender+dept+prate+exper+cert+clin, data = log_lawsuit)
+partial_F_list[[5]] = anova(fit_5,fit_6)
+fit_7 = lm(ln_sal_mean~gender+dept+prate+exper+cert+clin+rank, data = log_lawsuit)
+partial_F_list[[6]] = anova(fit_6,fit_7) %>% broom::tidy()
+```
+
+```{r}
+partial_F_table =
+  bind_rows(map(partial_F_list,broom::tidy)) %>% 
+  filter(!is.na(p.value)) %>% 
+  mutate(confounder = c("dept","prate","exper","cert","clin","rank")) %>% 
+  dplyr::select(confounder,df,statistic,p.value)
+partial_F_table
+```
+
+
 
 ### find interactions
 
@@ -389,13 +415,68 @@ interaction_F_table("ln_sal_mean")
 
 ```
 
+## delete prate and then find interaction terms
+
+
+```{r}
+interaction_F = function(outcome,test){
+  fml = as.formula(paste0(outcome,"~ gender + dept + clin + cert + exper + rank +", test,"+gender*",test,collapse = ""))
+  anova = anova(lm(fml,data = log_lawsuit))
+  
+  result = anova %>% 
+    broom::tidy() %>% 
+    mutate(add_term = paste0("gender:",test)) %>% 
+    dplyr::select(add_term, term,statistic, p.value) %>% 
+    mutate(result = ifelse(p.value> 0.05,"not significant","significant")) %>% 
+    filter(str_detect(term,"gender:"))
+  return(result)
+}
+
+interaction_F_table = function(outcome){
+  bind_rows(map2(.x = outcome, .y = names(log_lawsuit)[4:9], interaction_F))
+}
+
+interaction_F_table("ln_sal94")
+interaction_F_table("ln_sal95")
+interaction_F_table("ln_sal_mean")
+
+```
+
+
+```{r}
+interaction_t = function(outcome, test){
+  fml = as.formula(paste0(outcome,"~ gender + dept + clin + cert + exper + rank +", test,"+gender*",test,collapse = ""))
+  summary = summary(lm(fml,data = log_lawsuit %>% select(-prate)))
+  
+  result = summary %>% 
+    broom::tidy() %>% 
+    mutate(
+     add_term = paste0("gender*",test,collapse = "")
+      ) %>% 
+    dplyr::select(add_term,term, p.value) %>% 
+    filter(str_detect(term, "gendermale:")) %>% 
+    mutate(result = ifelse(p.value>0.05, "not significant", "significant"))
+  
+  return(result)
+  
+}
+
+interaction_t_table = function(outcome){
+  bind_rows(map2(.x =outcome, .y = names(log_lawsuit)[4:9], interaction_t))
+}  
+interaction_t_table("ln_sal94")
+interaction_t_table("ln_sal95")
+```
 
 
 
-
-
-
-
+```{r}
+log_lawsuit %>% 
+  ggplot(aes(y = ln_sal94, x = exper,color = rank))+
+  geom_point()+
+  geom_smooth( aes(group = rank),se = F)
+  
+```
 
 
 
